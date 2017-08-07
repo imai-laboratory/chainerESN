@@ -28,6 +28,10 @@ class ESN(Chain):
         self.resv_act = F.tanh
        
         # todo: implement random component selector
+        self.Wi = Variable(
+            self.randst.rand(n_inputs, n_reservoir) - 0.5,
+            dtype=float32
+        )
         self.randst = np.random.RandomState(1234)
         self.Wr = Variable(
             self.randst.rand(n_reservoir, n_reservoir) - 0.5,
@@ -35,25 +39,39 @@ class ESN(Chain):
         )
         
         with self.init_scope():
-            self.l1 = L.Linear(n_inputs, n_reservoir)
+            # self.l1 = L.Linear(n_inputs, n_reservoir)
             self.l3 = L.Linear(n_reservoir, n_outputs)
 
     def __call__(self, data_x, prev_resv, data_y):
-        u = self.l1(data_x)  # n_input -> n_resv
-        pre_act_resv = (1 - self.leaking_rate) * (prev_resv.dot(self.Wr)) + leaking_rate * u
-        resv = self.resv_act(pre_act_resv)
-        prev_resv = resv
-        y = self.l3(resv)
+        # compute forward
+        output_y, resv = self.forward(data_x, prev_resv)
         
-        # define loss
-        loss = F.softmax_cross_entropy(y, data_y)
-        accuracy = F.accuracy(y, data_y)
+        # compute loss
+        loss = F.softmax_cross_entropy(output_y, data_y)
+        accuracy = F.accuracy(output_y, data_y)
         
         # report loss
         report({'loss': loss, 'accuracy': accuracy}, self)
-        return loss
+        return loss, resv
         
-        
+    def forward(self, data_x, prev_resv):
+        # u = self.l1(data_x)  # n_input -> n_resv
+        u = self.Wi.dot(data_x)
+        pre_act_resv = prev_resv.dot(self.Wr) + self.Wi.dot(u)
+        resv = (1 - leaking_rate) * prev_resv + leaking_rate * self.resv_act(pre_act_resv)
+        prev_resv = resv
+        y = self.l3(resv)
+        return y, resv
+    
+    
+def fit(model, optimizer, n_train_epochs):
+    resv = np.zeros(model.n_reservoir)
+    for e in range(n_train_epochs):
+        model.zerograds()  # initialize gradients
+        loss, resv = model(data_x, resv, data_y)  # __call__ function forward computation
+        loss.backward()  # backward computation, computing gradients
+        optimizer.update()  # update params
+    
 if __name__ == '__main__':
     esn = ESN(
         n_inputs=100,
@@ -63,3 +81,4 @@ if __name__ == '__main__':
     )
     optimizer = optimizers.SGD()
     optimizer.setup(model)
+    fit(esn, optimizer, 100)
